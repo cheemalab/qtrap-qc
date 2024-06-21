@@ -1,0 +1,318 @@
+# install.packages("DT", dependencies = TRUE)
+# install.packages("shiny", dependencies = TRUE)
+# install.packages("dplyr", dependencies = TRUE)
+# install.packages("readr", dependencies = TRUE)
+# install.packages("tidyr", dependencies = TRUE)
+# install.packages("readxl", dependencies = TRUE)
+# install.packages("magrittr", dependencies = TRUE)
+# install.packages("matrixStats", dependencies = TRUE)
+# install.packages("shinythemes", dependencies = TRUE)
+# install.packages("ggplot2", dependencies = TRUE)
+# install.packages("forcats", dependencies = TRUE)
+# install.packages("tidyverse", dependencies = TRUE)
+library(tidyverse)
+library(DT)
+library(shiny)
+# library(dplyr)
+# library(readr)
+# library(tidyr)
+library(readxl)
+library(magrittr)
+library(matrixStats)
+library(shinythemes)
+library(ggplot2)
+library(forcats)
+
+options(shiny.maxRequestSize = 1024 * 1024 ^ 2)
+
+# Define UI
+ui <- fluidPage(
+    theme = shinytheme("cerulean"),
+    # shinythemes::themeSelector(),
+    titlePanel("5500 Qtrap Data Quality Control Tools"),
+    hr(),
+    helpText("Unpublished tools in Cheema Lab.
+             Please run this quality check protocol on a daily basis"),
+
+    sidebarLayout(
+        sidebarPanel(
+            helpText("Input of the raw .txt data file"),
+            fileInput("file_path", label = "Qtrap Data Input .txt File",
+                      multiple = TRUE,
+                      accept = c("text/csv",
+                                 "text/comma-separated-values,text/plain",
+                                 ".csv")),
+
+            hr(),
+
+            helpText("Input of the true feature .csv list, please use the template."),
+            fileInput("true_feature_path", label = "True feature dataset",
+                      multiple = TRUE,
+                      accept = c("text/csv",
+                                 "text/comma-separated-values,text/plain",
+                                 ".csv")),
+
+
+            hr(),
+
+            # Input: Decimal interval with step value ----
+            sliderInput("rt_tol", "Retention time tolerance (in mins):",
+                        min = 0, max = 1,
+                        value = 0.5, step = 0.1),
+
+
+            # Input: Decimal interval with step value ----
+            sliderInput("sn_ratio", "Signal-to-noise ratio:",
+                        min = 0, max = 50,
+                        value = 10, step = 0.1),
+
+            textInput("qc_name", "Name for pooled QC used in data file", "Pooled QC"),
+            textInput("nist_name", "Name for NIST plasma used in data file", "NIST"),
+
+            hr(),
+            # Button
+            helpText("Download the Pooled QC sample report"),
+            downloadButton("download_qc_report", "Download"),
+            helpText("Download the NIST Plasma sample report"),
+            downloadButton("download_nist_report", "Download"),
+            helpText("Download the dataset"),
+            downloadButton("download_all", "Download"),
+
+
+        ),
+
+        mainPanel(fluidRow(
+                    column(4, DTOutput('names_tbl')),
+                    column(8,
+                           plotOutput('x2', height = 400),
+                           plotOutput('x3', height = 400),)
+                  ),
+                  h4(""),
+                  verbatimTextOutput("summary"),
+                  tableOutput("preContents")
+
+        )
+    ),
+    hr(),
+    helpText("Unpublished tools in Cheema Lab created by Yaoxiang Li.
+            All rights reserved.")
+)
+
+# Define server logic
+server <- function(input, output, session) {
+    # TODO Following will be added as inputs later
+    qc_name   <- "Pooled QC"
+    nist_name <- "NIST"
+    # sn_ratio  <- 10
+    # rt_tol    <- 0.5
+
+    # TODO remove the test file code and data
+    # file_path <- "/mnt/cifs/20200218_pdac_ev_lipid_mediator_panel.txt"
+    # true_feature_path <- "/mnt/cifs/features_present.csv"
+
+
+
+    dataset_all <- reactive({
+        req(input$file_path)
+        req(input$true_feature_path)
+        req(input$sn_ratio)
+        req(input$rt_tol)
+
+        file_path <- input$file_path$datapath
+        print(file_path)
+        true_feature_path <- input$true_feature_path$datapath
+        print(true_feature_path)
+        sn_ratio <- input$sn_ratio
+        print(sn_ratio)
+        rt_tol <- input$rt_tol
+        print(rt_tol)
+
+
+        loaded_tibble <- read_delim(file = file_path, delim = "\t", na = c("N/A", "Unknown"))
+        true_features <- read_csv(true_feature_path) %>%
+            filter(present == "Yes") %>% select(features) %>% simplify2array()
+
+        loaded_tibble %<>%
+            filter(`Sample ID` != "Blank") %>%
+            filter(`Sample ID` != "Solvent Blank") %>%
+            filter(`Sample ID` != "Solvent blank") %>%
+            filter(`Sample ID` != "Solvent") %>%
+            filter(`Signal / Noise` > sn_ratio) %>%
+            filter(!is.na(`Retention Time`)) %>%
+            mutate(rt_diff = abs(`Expected RT` - `Retention Time`)) %>%
+            filter(rt_diff < rt_tol) %>%
+            transmute(sample_id     = paste0(`Sample Name`, "_",`Sample ID`),
+                      compound_name = `Component Name`,
+                      response      = `Area` / `IS Area`) %>%
+            spread(sample_id, response)
+
+        loaded_tibble %<>% filter(compound_name %in% true_features)
+        return(loaded_tibble)
+    })
+
+    dataset_names <- reactive({
+        loaded_tibble <- dataset_all()
+        name_tibble <- loaded_tibble %>% transmute(Names = compound_name)
+        return(name_tibble)
+    })
+
+    dataset_qc <- reactive({
+        req(input$qc_name)
+        qc_name <- input$qc_name
+        print(qc_name)
+
+        loaded_tibble <- dataset_all()
+        qc_tibble <- loaded_tibble %>% select(c("compound_name", contains(qc_name)))
+        qc_nm     <- colnames(qc_tibble)[-1]
+        qc_tibble %<>% mutate(Mean = rowMeans(.[qc_nm]),
+                              `Standard Deviation` = rowSds(as.matrix(.[qc_nm])),
+                              `Coefficient of variation` = `Standard Deviation` / Mean)
+        return(qc_tibble)
+
+    })
+
+    dataset_nist <- reactive({
+        req(input$nist_name)
+        nist_name <- input$nist_name
+        print(nist_name)
+
+        loaded_tibble <- dataset_all()
+        nist_tibble <- loaded_tibble %>% select(c("compound_name", contains(nist_name)))
+        nist_nm     <- colnames(nist_tibble)[-1]
+        nist_tibble %<>% mutate(Mean = rowMeans(.[nist_nm]),
+                                `Standard Deviation` = rowSds(as.matrix(.[nist_nm])),
+                                `Coefficient of variation` = `Standard Deviation` / Mean)
+        return(nist_tibble)
+    })
+
+
+
+
+
+# Datatable display section ----------------------------------------------------
+    output$names_tbl <- renderDT(
+        DT::datatable(dataset_names(),
+                      caption = 'List of presented features',
+                      selection = "single",
+                      rownames = FALSE,
+                      options = list(lengthMenu = c(20, 50, 100), pageLength = 20)),
+    )
+
+    # highlight selected rows in the scatterplot
+
+
+
+    output$x2 <- renderPlot({
+        xlab = "Processing order"
+        ylab = "Relative Concentration"
+        title = "Pooled QC Plot"
+
+
+        selected <- input$names_tbl_rows_selected
+        if (is.null(selected)) selected <- 1
+
+
+        # print(selected)
+        loaded_tibble <- dataset_all()[selected, -1]
+        # print(loaded_tibble)
+        qc_plot_data <- tibble(
+            acq_seq = 1:ncol(loaded_tibble),
+            qc_idx = ifelse(grepl(qc_name, colnames(loaded_tibble)),"QC","Sample"),
+            color_fill  = ifelse(grepl(qc_name, colnames(loaded_tibble)),"blue","yellow"),
+            conc = loaded_tibble %>% unlist(., use.names = FALSE)
+        )
+        # par(mar = c(4, 4, 1, .1))
+        qc_plot_data$qc_idx <- forcats::as_factor(qc_plot_data$qc_idx)
+        ggplot(qc_plot_data, aes(x = acq_seq, y = conc)) +
+            theme_bw() +
+            geom_point(
+                aes(col = qc_idx),
+                shape = 21,
+                fill = qc_plot_data$color_fill,
+                color = "black",
+                size = 3
+            ) +
+            geom_smooth(method = "loess",
+                        level = 0.5,
+                        linetype = "dashed") +
+            labs(y = ylab,
+                 x = xlab,
+                 title = title)
+    })
+
+    output$x3 <- renderPlot({
+        xlab = "Processing order"
+        ylab = "Relative Concentration"
+        title = "NIST Plasma QC Plot"
+
+        selected <- input$names_tbl_rows_selected
+        if (is.null(selected)) selected <- 1
+
+
+        # print(selected)
+        loaded_tibble <- dataset_all()[selected, -1]
+        # print(loaded_tibble)
+        qc_plot_data <- tibble(
+            acq_seq = 1:ncol(loaded_tibble),
+            qc_idx = ifelse(grepl(nist_name, colnames(loaded_tibble)),"QC","Sample"),
+            color_fill  = ifelse(grepl(nist_name, colnames(loaded_tibble)),"red","yellow"),
+            conc = loaded_tibble %>% unlist(., use.names = FALSE)
+        )
+        # par(mar = c(4, 4, 1, .1))
+        qc_plot_data$qc_idx <- forcats::as_factor(qc_plot_data$qc_idx)
+        ggplot(qc_plot_data, aes(x = acq_seq, y = conc)) +
+            theme_bw() +
+            geom_point(
+                aes(col = qc_idx),
+                shape = 21,
+                fill = qc_plot_data$color_fill,
+                color = "black",
+                size = 3
+            ) +
+            geom_smooth(method = "loess",
+                        level = 0.5,
+                        linetype = "dashed") +
+            labs(y = ylab,
+                 x = xlab,
+                 title = title)
+    })
+
+# Download section -------------------------------------------------------------
+    output$download_qc_report <- downloadHandler(
+        filename = function() {
+            sub(".txt",
+                paste0("_sn", input$sn_ratio, "_rt", input$rt_tol,"_pooled_qc.csv"),
+                basename(input$file_path$datapath))
+        },
+        content = function(file) {
+            write_excel_csv(dataset_qc(), file)
+        }
+    )
+
+    output$download_nist_report <- downloadHandler(
+        filename = function() {
+            sub(".txt",
+                paste0("_sn", input$sn_ratio, "_rt", input$rt_tol,"_nist.csv"),
+                basename(input$file_path$datapath))
+        },
+        content = function(file) {
+            write_excel_csv(dataset_nist(), file)
+        }
+    )
+
+    output$download_all <- downloadHandler(
+        filename = function() {
+            sub(".txt",
+                paste0("_sn", input$sn_ratio, "_rt", input$rt_tol,"_raw.csv"),
+                basename(input$file_path$datapath))
+        },
+        content = function(file) {
+            write_excel_csv(dataset_all(), file)
+        }
+    )
+}
+
+
+
+# Run the application
+shinyApp(ui = ui, server = server)

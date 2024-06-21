@@ -1,0 +1,13 @@
+name: qtrap-qc
+title: qtrap-qc
+username:
+account: cheema-lab
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 8363796
+bundleId: 7226273
+url: https://cheema-lab.shinyapps.io/qtrap-qc/
+when: 1684268661.7484
+lastSyncTime: 1684268661.74842
+asMultiple: FALSE
+asStatic: FALSE
