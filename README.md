@@ -1,4 +1,4 @@
-Description and Functionality:
+# Description and Functionality:
 Normalization Implementation: The tool enables users to conduct normalization based on a selected internal standard. This process adjusts the measurements to minimize the effects of varying experimental conditions, thereby ensuring that the observed variation reflects actual changes in the parameter of interest rather than artifacts of the experiment.
 Relative Standard Deviation (RSD) Computation: The tool carries out RSD calculations for both NIST (National Institute of Standards and Technology) and Pooled QC (Quality Control) samples. This feature aids in maintaining high-quality control in data analysis.
 Visualization Features: The tool facilitates the visualization of all features across the acquisition sequence, thereby helping users understand the data structure and detect any outliers or anomalies more intuitively.
